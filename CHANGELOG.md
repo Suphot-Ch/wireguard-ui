@@ -1,5 +1,11 @@
 # Local release history
 
+## 1.0.2 — 2026-10-02
+
+- Keep Table mode a real, horizontally scrollable table on phones instead of restyling its rows as cards.
+- Replace the table's crowded per-row controls with one Actions button. The client-specific modal retains Download, QR, Email, Telegram (when available), Edit, Enable/Disable, and Delete; it hands off to existing confirmation/edit dialogs after closing.
+- Verify phone layout and modal handoff in a browser with synthetic peers; production WireGuard remains untouched.
+
 ## 1.0.1 — 2026-10-02
 
 - Add a List/Table view switch to the Clients page, keeping the original cards as the default.

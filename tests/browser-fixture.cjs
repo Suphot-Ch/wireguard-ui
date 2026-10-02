@@ -35,9 +35,10 @@ const html = `<!doctype html><html><head><meta name="viewport" content="width=de
 </head><body><main class="container-fluid mt-3"><div class="alert alert-warning">SYNTHETIC TEST FIXTURE — NO REAL PEERS OR VPN ACTIONS</div>
 <form id="search-form" class="form-inline mb-3"><input class="form-control" id="search-input" placeholder="Search client" aria-label="Search client">
 <select class="form-control ml-2" id="status-selector"><option>All</option></select></form>
-${content}</main><script src="/jquery.js"></script>${stub}<script src="/helper.js"></script>${scripts}</body></html>`;
+${content}</main><script src="/jquery.js"></script><script src="/bootstrap.js"></script>${stub}<script src="/helper.js"></script>${scripts}</body></html>`;
 const files = {
     '/jquery.js': ['application/javascript', path.join(root, 'node_modules/jquery/dist/jquery.min.js')],
+    '/bootstrap.js': ['application/javascript', path.join(root, 'node_modules/admin-lte/node_modules/bootstrap/dist/js/bootstrap.bundle.min.js')],
     '/helper.js': ['application/javascript', path.join(root, 'custom/js/helper.js')],
     '/adminlte.css': ['text/css', path.join(root, 'node_modules/admin-lte/dist/css/adminlte.min.css')],
 };

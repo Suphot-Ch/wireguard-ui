@@ -68,10 +68,9 @@ test('default cards and accessible toggle render compact table with existing cli
     for (const value of ['Alice', 'alice@example.test', '10.0.0.2/32', '0.0.0.0/0', 'Enabled']) {
         assert.ok(row.text().includes(value), value);
     }
-    for (const target of ['#modal_qr_client', '#modal_email_client', '#modal_edit_client', '#modal_pause_client', '#modal_remove_client']) {
-        assert.equal(row.find(`[data-target="${target}"]`).length, 1, target);
-    }
-    assert.equal(row.find('a[href="download?clientid=abc-123"]').length, 1);
+    assert.equal(row.find('button').length, 1);
+    assert.equal(row.find('button').attr('data-target'), '#modal_client_actions');
+    assert.equal(row.find('a').length, 0);
     assert.equal(window.localStorage.getItem('wireguard-ui-client-view'), 'table');
     dom.window.close();
 });
@@ -99,9 +98,9 @@ test('table escapes untrusted client text and attribute values without exposing 
     assert.equal(row.find('img').length, 0);
     assert.equal($('#client-list img').length, 0);
     assert.equal(row.find('td').first().text(), dangerous);
-    assert.equal(row.find('[data-target="#modal_edit_client"]').attr('data-clientname'), dangerous);
+    assert.equal(row.find('[data-target="#modal_client_actions"]').attr('data-clientname'), dangerous);
     assert.equal(row.attr('data-client-id'), dangerous);
-    assert.equal(row.find('a').first().attr('href'), 'download?clientid=' + encodeURIComponent(dangerous));
+    assert.equal(row.find('a').length, 0);
     assert.ok(!row.text().includes('PRIVATE-SHOULD-NOT-RENDER'));
     assert.ok(!row.text().includes('PSK-SHOULD-NOT-RENDER'));
     dom.window.close();
@@ -141,6 +140,30 @@ test('failed status lookup must not claim clients are disconnected', async () =>
     dom.window.close();
 });
 
+test('row Actions opens a client-specific modal and forwards Edit after closing', async () => {
+    const { window, $, dom } = setup();
+    await ready(window);
+    const calls = [];
+    $.fn.modal = function (action, relatedTarget) {
+        calls.push([this.attr('id'), action, relatedTarget && $(relatedTarget).attr('data-clientid')]);
+        if (action === 'show' && this.attr('id') === 'modal_client_actions') {
+            this.trigger($.Event('show.bs.modal', { relatedTarget }));
+        }
+        if (action === 'hide') this.trigger('hidden.bs.modal');
+        return this;
+    };
+    const opener = $('#client-table tbody tr button').first();
+    $('#modal_client_actions').modal('show', opener[0]);
+    assert.match($('#modal_client_actions .modal-title').text(), /Alice/);
+    assert.equal($('#client-action-download').attr('href'), 'download?clientid=abc-123');
+    assert.equal($('#client-action-disable').prop('hidden'), false);
+    assert.equal($('#client-action-enable').prop('hidden'), true);
+    assert.equal($('#client-action-telegram').prop('hidden'), true);
+    $('#client-action-edit').trigger('click');
+    assert.deepEqual(calls.slice(-2), [['modal_client_actions', 'hide', undefined], ['modal_edit_client', 'show', 'abc-123']]);
+    dom.window.close();
+});
+
 test('new client, disable, enable and delete keep both views synchronized', async () => {
     const { window, $, dom } = setup();
     await ready(window);
@@ -148,17 +171,24 @@ test('new client, disable, enable and delete keep both views synchronized', asyn
     window.renderClientList([client({ id: 'new', name: 'New', enabled: false })]);
     assert.equal($('#client-table tbody tr').length, 2);
     const row = $('#client-table tbody tr').last();
-    assert.equal(row.find('.client-table-enable').prop('hidden'), false);
+    const opener = row.find('[data-target="#modal_client_actions"]');
+    assert.equal(opener.attr('data-client-enabled'), 'false');
     $('#paused_new .paused-client').trigger('click');
     assert.equal(row.find('.client-table-status').text(), 'Enabled');
     window.pauseClient('new');
-    row.find('.client-table-enable').trigger('click');
+    $.fn.modal = function (action) {
+        if (action === 'hide') this.trigger('hidden.bs.modal');
+        return this;
+    };
+    $('#modal_client_actions').trigger($.Event('show.bs.modal', { relatedTarget: opener[0] }));
+    assert.equal($('#client-action-enable').prop('hidden'), false);
+    assert.equal($('#client-action-disable').prop('hidden'), true);
+    $('#client-action-enable').trigger('click');
     assert.equal(row.find('.client-table-status').text(), 'Enabled');
     assert.equal($('#paused_new').css('visibility'), 'hidden');
     window.pauseClient('new');
     assert.equal(row.find('.client-table-status').text(), 'Disabled');
-    assert.equal(row.find('.client-table-disable').prop('hidden'), true);
-    $.fn.modal = function () { return this; };
+    assert.equal(opener.attr('data-client-enabled'), 'false');
     $('#remove_client_confirm').val('new').trigger('click');
     assert.equal($('#client-table tbody tr[data-client-id="new"]').length, 0);
     assert.equal($('#client_new').length, 0);

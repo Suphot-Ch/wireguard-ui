@@ -21,23 +21,13 @@ function renderClientTableRow(clientData) {
     const status = cell('Status', client.enabled ? 'Enabled' : 'Disabled');
     status.addClass('client-table-status');
     const actions = cell('Actions', '', 'client-table-actions').empty();
-    $('<a class="btn btn-outline-primary btn-sm">Download</a>')
-        .attr('href', 'download?clientid=' + encodeURIComponent(client.id)).appendTo(actions);
-    function modalButton(label, target) {
-        return $('<button type="button" class="btn btn-outline-primary btn-sm">')
-            .text(label).attr({ 'data-toggle': 'modal', 'data-target': target,
-                'data-clientid': client.id, 'data-clientname': client.name }).appendTo(actions);
-    }
-    modalButton('QR code', '#modal_qr_client').prop('disabled', !clientData.QRCode);
-    modalButton('Email', '#modal_email_client');
-    if (client.telegram_userid) modalButton('Telegram', '#modal_telegram_client');
-    modalButton('Edit', '#modal_edit_client');
-    const disable = modalButton('Disable', '#modal_pause_client').addClass('client-table-disable');
-    const enable = $('<button type="button" class="btn btn-outline-success btn-sm client-table-enable">Enable</button>')
-        .on('click', function () { resumeClient(client.id); }).appendTo(actions);
-    disable.prop('hidden', !client.enabled);
-    enable.prop('hidden', !!client.enabled);
-    modalButton('Delete', '#modal_remove_client').addClass('btn-outline-danger');
+    $('<button type="button" class="btn btn-outline-primary btn-sm">Actions</button>')
+        .attr({ 'data-toggle': 'modal', 'data-target': '#modal_client_actions',
+            'data-clientid': client.id, 'data-clientname': client.name,
+            'data-client-qr': clientData.QRCode ? 'true' : 'false',
+            'data-client-telegram': client.telegram_userid ? 'true' : 'false',
+            'data-client-enabled': client.enabled ? 'true' : 'false' })
+        .appendTo(actions);
     $('#client-table tbody').append(row);
     return row;
 }

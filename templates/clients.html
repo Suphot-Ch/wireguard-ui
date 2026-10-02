@@ -10,17 +10,13 @@ Wireguard Clients
     }
     i[class^="paused-client"]:hover { transform: scale(1.5); }
     .client-table-actions { white-space: nowrap; }
-    #client-table[hidden], #client-list[hidden], .client-table-actions [hidden] { display: none !important; }
+    #client-table[hidden], #client-list[hidden], .client-action-choices [hidden] { display: none !important; }
     .client-table-actions .btn { margin: 0 2px 3px 0; }
     .client-table-ips { overflow-wrap: anywhere; }
     @media (max-width: 767px) {
-        #client-table thead { display: none; }
-        #client-table, #client-table tbody, #client-table tr, #client-table td { display: block; width: 100%; }
-        #client-table tr { margin-bottom: .75rem; border: 1px solid #dee2e6; }
-        #client-table td { display: flex; gap: .75rem; justify-content: space-between; text-align: right; }
-        #client-table td::before { content: attr(data-label); font-weight: 600; text-align: left; flex: 0 0 6rem; }
-        #client-table .client-table-actions { white-space: normal; flex-wrap: wrap; justify-content: flex-start; }
-        #client-table .client-table-actions::before { flex: 0 0 100%; }
+        /* Table mode remains a real table on phones; scroll within the table. */
+        #client-table .table { min-width: 1040px; }
+        #client-table th, #client-table td { vertical-align: middle; }
     }
 </style>
 {{end}}
@@ -42,7 +38,7 @@ Wireguard Clients
         </div>
         <div class="row" id="client-list">
         </div>
-        <div id="client-table" hidden>
+        <div id="client-table" class="table-responsive" hidden>
             <table class="table table-sm table-striped table-hover" aria-label="Clients">
                 <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">IP Allocation</th><th scope="col">Allowed IPs</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
                 <tbody></tbody>
@@ -51,6 +47,27 @@ Wireguard Clients
         <!-- /.row -->
     </div>
 </section>
+
+<div class="modal fade" id="modal_client_actions" tabindex="-1" role="dialog" aria-labelledby="client-actions-title">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title" id="client-actions-title">Client actions</h4>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+            </div>
+            <div class="modal-body client-action-choices">
+                <a id="client-action-download" class="btn btn-outline-primary btn-block" href="#">Download</a>
+                <button type="button" id="client-action-qr" class="btn btn-outline-primary btn-block" data-action-target="#modal_qr_client">QR code</button>
+                <button type="button" id="client-action-email" class="btn btn-outline-primary btn-block" data-action-target="#modal_email_client">Email</button>
+                <button type="button" id="client-action-telegram" class="btn btn-outline-primary btn-block" data-action-target="#modal_telegram_client">Telegram</button>
+                <button type="button" id="client-action-edit" class="btn btn-outline-primary btn-block" data-action-target="#modal_edit_client">Edit</button>
+                <button type="button" id="client-action-disable" class="btn btn-outline-warning btn-block" data-action-target="#modal_pause_client">Disable</button>
+                <button type="button" id="client-action-enable" class="btn btn-outline-success btn-block">Enable</button>
+                <button type="button" id="client-action-delete" class="btn btn-outline-danger btn-block" data-action-target="#modal_remove_client">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <div class="modal fade" id="modal_email_client">
     <div class="modal-dialog">
@@ -300,6 +317,36 @@ Wireguard Clients
             $('#client-view-table').on('click', function () { setClientView('table'); });
         });
 
+        $('#modal_client_actions').on('show.bs.modal', function (event) {
+            const opener = $(event.relatedTarget);
+            const id = opener.attr('data-clientid');
+            const name = opener.attr('data-clientname');
+            const modal = $(this);
+            modal.attr('data-clientid', id);
+            modal.find('.modal-title').text('Actions for ' + name);
+            modal.find('#client-action-download').attr('href', 'download?clientid=' + encodeURIComponent(id));
+            modal.find('[data-action-target]').attr({ 'data-clientid': id, 'data-clientname': name });
+            modal.find('#client-action-qr').prop('disabled', opener.attr('data-client-qr') !== 'true');
+            modal.find('#client-action-telegram').prop('hidden', opener.attr('data-client-telegram') !== 'true');
+            const enabled = opener.attr('data-client-enabled') === 'true';
+            modal.find('#client-action-disable').prop('hidden', !enabled);
+            modal.find('#client-action-enable').prop('hidden', enabled);
+        });
+
+        $('#modal_client_actions').on('click', '[data-action-target]', function () {
+            const target = $(this).attr('data-action-target');
+            const trigger = this;
+            $('#modal_client_actions').one('hidden.bs.modal', function () {
+                $(target).modal('show', trigger);
+            }).modal('hide');
+        });
+
+        $('#modal_client_actions').on('click', '#client-action-enable', function () {
+            const id = $('#modal_client_actions').attr('data-clientid');
+            $('#modal_client_actions').modal('hide');
+            if (id) resumeClient(id);
+        });
+
         function populateClientList() {
             $.ajax({
                 cache: false,
@@ -346,8 +393,7 @@ Wireguard Clients
                 const item = $(this);
                 item.data('client-enabled', enabled);
                 item.find('.client-table-status').text(enabled ? 'Enabled' : 'Disabled');
-                item.find('.client-table-disable').prop('hidden', !enabled);
-                item.find('.client-table-enable').prop('hidden', enabled);
+                item.find('[data-target="#modal_client_actions"]').attr('data-client-enabled', String(enabled));
             });
             applyClientFilters();
         }
