@@ -19,7 +19,9 @@ const client = (overrides = {}) => ({ Client: {
     ...overrides
 }, QRCode: 'qr' });
 
-function setup(data = [client()], preference, statusFailure = false) {
+function setup(data = [client()], preference, statusFailure = false, onlineResponse = {
+    available: true, source: 'live', as_of_unix: 1710000000, online_keys: ['public-key']
+}) {
     const page = template.match(/{{define "page_content"}}([\s\S]*?){{end}}/)[1];
     const html = `<form id="search-form"><input id="search-input"><select id="status-selector"><option>All</option></select></form>${page}`;
     const dom = new JSDOM(html, { url: 'https://wireguard.test/clients', runScripts: 'outside-only' });
@@ -34,6 +36,10 @@ function setup(data = [client()], preference, statusFailure = false) {
     $.getJSON = (url, params, callback) => callback(['10.0.0.0/24']);
     $.ajax = (options) => {
         if (options.url.endsWith('/api/clients')) options.success(data);
+        else if (options.url.endsWith('/api/clients/online-status')) {
+            if (statusFailure) options.error();
+            else options.success(onlineResponse);
+        }
         else if (options.url.endsWith('/status')) {
             if (statusFailure) options.error();
             else options.success('<main><table><tbody><tr class="table-success"><th>1</th><td>Alice</td><td>a@test</td><td>10.0.0.2</td><td>endpoint</td><td>public-key</td></tr></tbody></table></main>');
@@ -106,7 +112,7 @@ test('table escapes untrusted client text and attribute values without exposing 
     dom.window.close();
 });
 
-test('search and status/subnet filters show the same matching clients in either view', async () => {
+test('search combines with config, subnet and online filters in both views', async () => {
     const { window, $, dom } = setup([client(), client({ id: 'b', name: 'Bob', email: 'bob@test',
         public_key: 'Alice', allocated_ips: ['10.2.2.2/32'], allowed_ips: ['192.168.0.0/16'],
         subnet_ranges: ['10.2.0.0/16'], enabled: false, additional_notes: 'support' })]);
@@ -119,24 +125,54 @@ test('search and status/subnet filters show the same matching clients in either 
     $('#search-input').val('SUPPORT').trigger('keyup');
     assert.equal(visible('#client-table tbody tr'), 1);
     $('#status-selector').val('Enabled').trigger('change');
+    assert.equal(visible('#client-table tbody tr'), 0);
+    $('#search-input').val('').trigger('input');
     assert.equal(visible('#client-table tbody tr'), 1);
     assert.equal(visible('#client-list > .col-lg-4'), 1);
     $('#status-selector').val('10.0.0.0/24').trigger('change');
     assert.equal(visible('#client-table tbody tr'), 1);
-    $('#status-selector').val('Connected').trigger('change');
+    $('#online-selector').val('online').trigger('change');
     assert.equal(visible('#client-table tbody tr'), 1);
     assert.equal($('#client-table tbody tr').filter(function () { return $(this).css('display') !== 'none'; }).attr('data-client-id'), 'abc-123');
-    $('#status-selector').val('Disconnected').trigger('change');
+    $('#online-selector').val('offline').trigger('change');
+    assert.equal(visible('#client-table tbody tr'), 0);
+    $('#status-selector').val('All').trigger('change');
     assert.equal(visible('#client-table tbody tr'), 1);
+    assert.equal($('#client-table tbody tr').filter(function () { return $(this).css('display') !== 'none'; }).attr('data-client-id'), 'b');
     dom.window.close();
 });
 
-test('failed status lookup must not claim clients are disconnected', async () => {
+test('failed status lookup must not claim clients are offline', async () => {
     const { window, $, dom } = setup([client()], 'table', true);
     await ready(window);
-    $('#status-selector').val('Disconnected').trigger('change');
+    $('#online-selector').val('offline').trigger('change');
     assert.equal($('#client-table tbody tr').filter(function () { return $(this).css('display') !== 'none'; }).length, 0);
     assert.equal($('#client-list > .col-lg-4').filter(function () { return $(this).css('display') !== 'none'; }).length, 0);
+    assert.equal($('#client-table tbody tr .client-connection-status').text(), 'Unknown');
+    dom.window.close();
+});
+
+test('sorting changes card and table order without losing search or online state', async () => {
+    const clients = [client({ id: 'z', name: 'Zed', public_key: 'offline-key', allocated_ips: ['10.0.0.10/32'] }),
+        client({ id: 'a', name: 'Alice', public_key: 'public-key', allocated_ips: ['10.0.0.2/32'] })];
+    const { window, $, dom } = setup(clients);
+    await ready(window);
+    const order = selector => $(selector).map((_, element) => $(element).attr('data-client-id')).get();
+    $('#client-sort').val('name-asc').trigger('change');
+    assert.deepEqual(order('#client-table tbody tr'), ['a', 'z']);
+    assert.deepEqual($('#client-list > .col-lg-4').map((_, e) => e.id).get(), ['client_a', 'client_z']);
+    $('#client-sort').val('ip-asc').trigger('change');
+    assert.deepEqual(order('#client-table tbody tr'), ['a', 'z']);
+    $('#client-sort').val('name-desc').trigger('change');
+    assert.deepEqual(order('#client-table tbody tr'), ['z', 'a']);
+    $('#client-sort').val('online-first').trigger('change');
+    assert.deepEqual(order('#client-table tbody tr'), ['a', 'z']);
+    assert.equal($('#client-table tbody tr').first().find('.client-connection-status').text(), 'Online');
+    assert.equal($('#client-table tbody tr').last().find('.client-connection-status').text(), 'Offline');
+    $('#online-selector').val('online').trigger('change');
+    $('#search-input').val('Zed').trigger('input');
+    assert.equal($('#online-selector').val(), 'online');
+    assert.equal($('#client-table tbody tr').filter(function () { return $(this).css('display') !== 'none'; }).length, 0);
     dom.window.close();
 });
 

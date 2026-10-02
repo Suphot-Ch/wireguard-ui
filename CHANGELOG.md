@@ -1,5 +1,11 @@
 # Local release history
 
+## 1.0.3 — 2026-10-02
+
+- Add sortable client order (name, allocated IP, online-first, updated), persistent search, and independent config/online filters for both List and Table views.
+- Show Online, Offline, or Unknown separately from Enabled/Disabled. Online means a WireGuard handshake within three minutes, consistent with the existing Status page; unavailable/stale data must never be labeled Offline.
+- Add an authenticated read-only online-status API. Isolated preview may use a private, freshness-checked snapshot produced by a read-only host helper; production uses the local WireGuard interface. No peer configuration or tunnel lifecycle change.
+
 ## 1.0.2 — 2026-10-02
 
 - Keep Table mode a real, horizontally scrollable table on phones instead of restyling its rows as cards.

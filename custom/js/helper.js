@@ -18,6 +18,7 @@ function renderClientTableRow(clientData) {
     cell('Email', client.email);
     cell('IP Allocation', (client.allocated_ips || []).join(', '), 'client-table-ips');
     cell('Allowed IPs', (client.allowed_ips || []).join(', '), 'client-table-ips');
+    cell('Online', 'Unknown', 'client-connection-status');
     const status = cell('Status', client.enabled ? 'Enabled' : 'Disabled');
     status.addClass('client-table-status');
     const actions = cell('Actions', '', 'client-table-actions').empty();
@@ -128,6 +129,7 @@ function renderClientList(data) {
                                 </div>
                                 <hr>
                                 <span class="info-box-text"><i class="fas fa-user"></i> ${obj.Client.name}</span>
+                                <span class="info-box-text"><i class="fas fa-signal"></i> <span class="client-connection-status badge badge-secondary">Unknown</span></span>
                                 <span class="info-box-text" style="display: none"><i class="fas fa-key"></i> ${obj.Client.public_key}</span>
                                 <span class="info-box-text" style="display: none"><i class="fas fa-subnetrange"></i>${subnetRangesString}</span>
                                 ${telegramHtml}
@@ -156,11 +158,15 @@ function renderClientList(data) {
             .join(' ').toLocaleLowerCase();
         const card = $('#client-list').children().last();
         const row = renderClientTableRow(original);
+        card.attr('data-client-id', rawClient.id);
         card.add(row).data('client-search', search).data('client-enabled', !!rawClient.enabled)
             .data('client-subnets', rawClient.subnet_ranges || [])
-            .data('client-public-key', rawClient.public_key);
+            .data('client-public-key', rawClient.public_key)
+            .data('client-name', rawClient.name || '')
+            .data('client-ip', (rawClient.allocated_ips || [])[0] || '')
+            .data('client-updated', rawClient.updated_at || '');
     });
-    if (typeof applyClientFilters === 'function') applyClientFilters();
+    if (typeof refreshClientView === 'function') refreshClientView();
 }
 
 function renderUserList(data) {

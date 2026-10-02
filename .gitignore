@@ -17,6 +17,8 @@ vendor/
 assets/*
 !assets/.gitkeep
 node_modules/
+__pycache__/
+*.pyc
 
 # IDEs
 .vscode

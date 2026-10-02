@@ -26,6 +26,7 @@ window.updateApplyConfigVisibility = function () {};
 jQuery.getJSON = function (url, params, callback) { callback(['192.0.2.0/24','198.51.100.0/24']); };
 jQuery.ajax = function (options) {
     if (options.url.endsWith('/api/clients')) options.success(${JSON.stringify(fixtures)});
+    else if (options.url.endsWith('/api/clients/online-status')) options.success({ available: true, source: 'preview_snapshot', as_of_unix: Math.floor(Date.now()/1000), online_keys: ['fake-public-key-one'] });
     else if (options.url.endsWith('/status')) options.success('<table><tr class="table-success"><th>1</th><td>Example gateway</td><td>gateway@example.test</td><td>192.0.2.10/32</td><td>fake</td><td>fake-public-key-one</td></tr></table>');
     else if (options.success) options.success({});
 };

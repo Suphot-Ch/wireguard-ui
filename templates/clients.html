@@ -32,15 +32,33 @@ Wireguard Clients
 {{define "page_content"}}
 <section class="content">
     <div class="container-fluid">
-        <div class="btn-group mb-3" role="group" aria-label="Client view">
-            <button type="button" id="client-view-list" class="btn btn-outline-primary btn-sm" aria-pressed="true">List</button>
-            <button type="button" id="client-view-table" class="btn btn-outline-primary btn-sm" aria-pressed="false">Table</button>
+        <div class="d-flex flex-wrap align-items-center mb-3" style="gap: .5rem">
+            <div class="btn-group" role="group" aria-label="Client view">
+                <button type="button" id="client-view-list" class="btn btn-outline-primary btn-sm" aria-pressed="true">List</button>
+                <button type="button" id="client-view-table" class="btn btn-outline-primary btn-sm" aria-pressed="false">Table</button>
+            </div>
+            <label class="sr-only" for="client-sort">Sort clients</label>
+            <select id="client-sort" class="custom-select custom-select-sm" style="width: auto" aria-label="Sort clients">
+                <option value="name-asc">Name A–Z</option>
+                <option value="name-desc">Name Z–A</option>
+                <option value="ip-asc">IP allocation</option>
+                <option value="online-first">Online first</option>
+                <option value="updated-desc">Recently updated</option>
+            </select>
+            <label class="sr-only" for="online-selector">Filter online status</label>
+            <select id="online-selector" class="custom-select custom-select-sm" style="width: auto" aria-label="Filter online status">
+                <option value="all">All online status</option>
+                <option value="online">Online</option>
+                <option value="offline">Offline</option>
+            </select>
+            <button type="button" id="refresh-online" class="btn btn-outline-secondary btn-sm">Refresh online</button>
+            <span id="online-source" class="small text-muted" role="status">Online: checking…</span>
         </div>
         <div class="row" id="client-list">
         </div>
         <div id="client-table" class="table-responsive" hidden>
             <table class="table table-sm table-striped table-hover" aria-label="Clients">
-                <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">IP Allocation</th><th scope="col">Allowed IPs</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">IP Allocation</th><th scope="col">Allowed IPs</th><th scope="col">Online</th><th scope="col">Config</th><th scope="col">Actions</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -356,6 +374,7 @@ Wireguard Clients
                 contentType: "application/json",
                 success: function (data) {
                     renderClientList(data);
+                    refreshClientOnlineStatus();
                 },
                 error: function (jqXHR, exception) {
                     const responseJson = jQuery.parseJSON(jqXHR.responseText);
@@ -395,7 +414,7 @@ Wireguard Clients
                 item.find('.client-table-status').text(enabled ? 'Enabled' : 'Disabled');
                 item.find('[data-target="#modal_client_actions"]').attr('data-client-enabled', String(enabled));
             });
-            applyClientFilters();
+            refreshClientView();
         }
 
         $('#client-list').on('click keydown', '.paused-client', function (event) {
@@ -485,13 +504,7 @@ Wireguard Clients
                         .val("Enabled"),
                     $("<option></option>")
                         .text("Disabled")
-                        .val("Disabled"),
-                    $("<option></option>")
-                        .text("Connected")
-                        .val("Connected"),
-                    $("<option></option>")
-                        .text("Disconnected")
-                        .val("Disconnected")
+                        .val("Disabled")
                 );
                 $.each(data, function(index, item) {
                     $("#status-selector").append(
@@ -519,62 +532,92 @@ Wireguard Clients
             };
         })
 
-        // Filter both representations by the same client metadata, not by their markup.
-        let connectedKeys = null;
-        let statusRequest = 0;
+        // Keep status independent from configuration state; never label an unavailable feed Offline.
+        let onlineKeys = null;
+        let onlineRequest = 0;
+        const clientNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+        function refreshClientView() {
+            const entries = $('#client-list > .col-lg-4, #client-table tbody tr');
+            entries.each(function () {
+                const item = $(this);
+                const key = item.data('client-public-key');
+                const online = onlineKeys !== null && key ? onlineKeys.has(key) : null;
+                item.data('client-online', online);
+                item.find('.client-connection-status').text(online === null ? 'Unknown' : online ? 'Online' : 'Offline');
+            });
+            const sortBy = $('#client-sort').val() || 'name-asc';
+            function compare(a, b) {
+                const left = $(a), right = $(b);
+                if (sortBy === 'online-first') {
+                    const rank = state => state === true ? 0 : state === false ? 1 : 2;
+                    const difference = rank(left.data('client-online')) - rank(right.data('client-online'));
+                    if (difference) return difference;
+                }
+                if (sortBy === 'updated-desc') {
+                    const difference = (Date.parse(right.data('client-updated')) || 0) - (Date.parse(left.data('client-updated')) || 0);
+                    if (difference) return difference;
+                }
+                if (sortBy === 'ip-asc') {
+                    const difference = clientNameCollator.compare(left.data('client-ip') || '', right.data('client-ip') || '');
+                    if (difference) return difference;
+                }
+                const names = clientNameCollator.compare(left.data('client-name') || '', right.data('client-name') || '');
+                return sortBy === 'name-desc' ? -names : names;
+            }
+            $('#client-list').append($('#client-list > .col-lg-4').get().sort(compare));
+            $('#client-table tbody').append($('#client-table tbody tr').get().sort(compare));
+            applyClientFilters();
+        }
+
         function applyClientFilters() {
             const query = ($('#search-input').val() || '').trim().toLocaleLowerCase();
             const selected = $('#status-selector').val() || 'All';
+            const onlineFilter = $('#online-selector').val() || 'all';
             $('#client-list > .col-lg-4, #client-table tbody tr').each(function () {
                 const item = $(this);
                 let match = (item.data('client-search') || '').includes(query);
                 if (selected === 'Enabled') match = match && item.data('client-enabled') === true;
                 else if (selected === 'Disabled') match = match && item.data('client-enabled') === false;
-                else if (selected === 'Connected' || selected === 'Disconnected') {
-                    const publicKey = item.data('client-public-key');
-                    const online = publicKey && connectedKeys && connectedKeys.includes(publicKey);
-                    match = match && connectedKeys !== null && (selected === 'Connected' ? !!online : !online);
-                } else if (selected !== 'All') {
-                    match = match && (item.data('client-subnets') || []).includes(selected);
-                }
+                else if (selected !== 'All') match = match && (item.data('client-subnets') || []).includes(selected);
+                if (onlineFilter === 'online') match = match && item.data('client-online') === true;
+                if (onlineFilter === 'offline') match = match && item.data('client-online') === false;
                 item.toggle(match);
             });
         }
 
-        $('#search-input').on('input keyup', function () {
-            $('#status-selector').val('All');
-            ++statusRequest;
-            applyClientFilters();
-        });
-
-        $('#status-selector').on('change', function () {
-            $('#search-input').val('');
-            const selected = $(this).val();
-            const request = ++statusRequest;
-            if (selected === 'Connected' || selected === 'Disconnected') {
-                connectedKeys = null;
-                applyClientFilters();
-                $.ajax({
-                    cache: false, method: 'GET', url: '{{.basePath}}/status',
-                    success: function (data) {
-                        if (request !== statusRequest) return;
-                        connectedKeys = $(data).find('.table-success').map(function () {
-                            return $(this).children('td').eq(4).text().trim();
-                        }).get();
-                        applyClientFilters();
-                    },
-                    error: function () {
-                        if (request !== statusRequest) return;
-                        // Unknown is not disconnected: keep both views empty rather than mislabel peers.
-                        connectedKeys = null;
-                        toastr.error('Unable to load connection status');
-                        applyClientFilters();
+        function refreshClientOnlineStatus() {
+            const request = ++onlineRequest;
+            $('#online-source').text('Online: checking…');
+            $.ajax({
+                cache: false, method: 'GET', url: '{{.basePath}}/api/clients/online-status', dataType: 'json',
+                success: function (response) {
+                    if (request !== onlineRequest) return;
+                    if (response.available === true && Array.isArray(response.online_keys)) {
+                        onlineKeys = new Set(response.online_keys);
+                        const source = response.source === 'preview_snapshot' ? 'preview snapshot' : 'live';
+                        const timestamp = Number(response.as_of_unix);
+                        const when = Number.isFinite(timestamp) && timestamp > 0 ? ' · ' + new Date(timestamp * 1000).toLocaleTimeString() : '';
+                        $('#online-source').text('Online: ' + source + when + ' (handshake <3 min)');
+                    } else {
+                        onlineKeys = null;
+                        $('#online-source').text('Online: unavailable');
                     }
-                });
-            } else {
-                applyClientFilters();
-            }
-        });
+                    refreshClientView();
+                },
+                error: function () {
+                    if (request !== onlineRequest) return;
+                    onlineKeys = null;
+                    $('#online-source').text('Online: unavailable');
+                    refreshClientView();
+                }
+            });
+        }
+
+        $('#search-input').on('input keyup', applyClientFilters);
+        $('#status-selector, #online-selector').on('change', applyClientFilters);
+        $('#client-sort').on('change', refreshClientView);
+        $('#refresh-online').on('click', refreshClientOnlineStatus);
+        $(document).ready(function () { window.setInterval(refreshClientOnlineStatus, 30000); });
 
         // modal_pause_client modal event
         $("#modal_pause_client").on('show.bs.modal', function (event) {
