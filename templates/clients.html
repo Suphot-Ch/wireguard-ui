@@ -9,6 +9,19 @@ Wireguard Clients
         cursor: pointer;
     }
     i[class^="paused-client"]:hover { transform: scale(1.5); }
+    .client-table-actions { white-space: nowrap; }
+    #client-table[hidden], #client-list[hidden], .client-table-actions [hidden] { display: none !important; }
+    .client-table-actions .btn { margin: 0 2px 3px 0; }
+    .client-table-ips { overflow-wrap: anywhere; }
+    @media (max-width: 767px) {
+        #client-table thead { display: none; }
+        #client-table, #client-table tbody, #client-table tr, #client-table td { display: block; width: 100%; }
+        #client-table tr { margin-bottom: .75rem; border: 1px solid #dee2e6; }
+        #client-table td { display: flex; gap: .75rem; justify-content: space-between; text-align: right; }
+        #client-table td::before { content: attr(data-label); font-weight: 600; text-align: left; flex: 0 0 6rem; }
+        #client-table .client-table-actions { white-space: normal; flex-wrap: wrap; justify-content: flex-start; }
+        #client-table .client-table-actions::before { flex: 0 0 100%; }
+    }
 </style>
 {{end}}
 
@@ -23,8 +36,17 @@ Wireguard Clients
 {{define "page_content"}}
 <section class="content">
     <div class="container-fluid">
-        <!-- <h5 class="mt-4 mb-2">Wireguard Clients</h5> -->
+        <div class="btn-group mb-3" role="group" aria-label="Client view">
+            <button type="button" id="client-view-list" class="btn btn-outline-primary btn-sm" aria-pressed="true">List</button>
+            <button type="button" id="client-view-table" class="btn btn-outline-primary btn-sm" aria-pressed="false">Table</button>
+        </div>
         <div class="row" id="client-list">
+        </div>
+        <div id="client-table" hidden>
+            <table class="table table-sm table-striped table-hover" aria-label="Clients">
+                <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">IP Allocation</th><th scope="col">Allowed IPs</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                <tbody></tbody>
+            </table>
         </div>
         <!-- /.row -->
     </div>
@@ -260,6 +282,24 @@ Wireguard Clients
 
 {{define "bottom_js"}}
     <script>
+        const clientViewKey = 'wireguard-ui-client-view';
+        function setClientView(view) {
+            const table = view === 'table';
+            $('#client-list').prop('hidden', table);
+            $('#client-table').prop('hidden', !table);
+            $('#client-view-list').attr('aria-pressed', String(!table)).toggleClass('active', !table);
+            $('#client-view-table').attr('aria-pressed', String(table)).toggleClass('active', table);
+            try { localStorage.setItem(clientViewKey, table ? 'table' : 'list'); } catch (error) { /* private mode */ }
+        }
+
+        $(document).ready(function () {
+            let view = 'list';
+            try { view = localStorage.getItem(clientViewKey) === 'table' ? 'table' : 'list'; } catch (error) { /* private mode */ }
+            setClientView(view);
+            $('#client-view-list').on('click', function () { setClientView('list'); });
+            $('#client-view-table').on('click', function () { setClientView('table'); });
+        });
+
         function populateClientList() {
             $.ajax({
                 cache: false,
@@ -296,18 +336,38 @@ Wireguard Clients
             });
         }
 
+        function updateClientStatusView(clientID, enabled) {
+            const overlay = document.getElementById('paused_' + clientID);
+            if (overlay) overlay.style.visibility = enabled ? 'hidden' : 'visible';
+            $('#client-list > .col-lg-4, #client-table tbody tr').filter(function () {
+                return $(this).data('client-id') === clientID ||
+                    $(this).attr('id') === 'client_' + clientID;
+            }).each(function () {
+                const item = $(this);
+                item.data('client-enabled', enabled);
+                item.find('.client-table-status').text(enabled ? 'Enabled' : 'Disabled');
+                item.find('.client-table-disable').prop('hidden', !enabled);
+                item.find('.client-table-enable').prop('hidden', enabled);
+            });
+            applyClientFilters();
+        }
+
+        $('#client-list').on('click keydown', '.paused-client', function (event) {
+            if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            resumeClient($(this).attr('data-clientid'));
+        });
+
         function resumeClient(clientID) {
             setClientStatus(clientID, true);
-            const divElement = document.getElementById("paused_" + clientID);
-            divElement.style.visibility = "hidden";
-            updateApplyConfigVisibility()
+            updateClientStatusView(clientID, true);
+            updateApplyConfigVisibility();
         }
 
         function pauseClient(clientID) {
             setClientStatus(clientID, false);
-            const divElement = document.getElementById("paused_" + clientID);
-            divElement.style.visibility = "visible";
-            updateApplyConfigVisibility()
+            updateClientStatusView(clientID, false);
+            updateApplyConfigVisibility();
         }
 
         // updateIPAllocationSuggestion function for automatically fill
@@ -413,103 +473,60 @@ Wireguard Clients
             };
         })
 
-        // hide all clients and display only the ones that meet the search criteria (name, email, IP)
-        $('#search-input').keyup(function () {
-            $("#status-selector").val("All");
-            let query = $(this).val().trim();
-            $('.col-lg-4').hide();
-            $(".info-box-text").each(function() {
-                if($(this).children('i.fa-user').length > 0 || $(this).children('i.fa-envelope').length > 0)
-                {
-                    $(this).filter(':contains("' + query + '")').parent().parent().parent().show();
+        // Filter both representations by the same client metadata, not by their markup.
+        let connectedKeys = null;
+        let statusRequest = 0;
+        function applyClientFilters() {
+            const query = ($('#search-input').val() || '').trim().toLocaleLowerCase();
+            const selected = $('#status-selector').val() || 'All';
+            $('#client-list > .col-lg-4, #client-table tbody tr').each(function () {
+                const item = $(this);
+                let match = (item.data('client-search') || '').includes(query);
+                if (selected === 'Enabled') match = match && item.data('client-enabled') === true;
+                else if (selected === 'Disabled') match = match && item.data('client-enabled') === false;
+                else if (selected === 'Connected' || selected === 'Disconnected') {
+                    const publicKey = item.data('client-public-key');
+                    const online = publicKey && connectedKeys && connectedKeys.includes(publicKey);
+                    match = match && connectedKeys !== null && (selected === 'Connected' ? !!online : !online);
+                } else if (selected !== 'All') {
+                    match = match && (item.data('client-subnets') || []).includes(selected);
                 }
-                })
-            $(".badge-secondary").filter(':contains("' + query + '")').parent().parent().parent().show();
-            $(".fa-tguserid").each(function () {
-                if ($(this).parent().text().trim().indexOf(query) != -1) {
-                    $(this).closest('.col-lg-4').show();
-                }
-            })
-            let upperQuery = query.toUpperCase()
-            $(".fa-additional_notes").each(function () {
-                if ($(this).parent().text().trim().indexOf(upperQuery) != -1) {
-                    $(this).closest('.col-lg-4').show();
-                }
-            })
-        })
+                item.toggle(match);
+            });
+        }
 
-        $("#status-selector").on('change', function () {
-            $('#search-input').val("");
-            switch ($("#status-selector").val()) {
-                case "All":
-                    $('.col-lg-4').show();
-                    break;
-                case "Enabled":
-                    $('.col-lg-4').hide();
-                    $('[id^="paused_"]').each(function () {
-                        if ($(this).css("visibility") === "hidden") {
-                            $(this).parent().parent().show();
-                        }
-                    });
-                    break;
-                case "Disabled":
-                    $('.col-lg-4').hide();
-                    $('[id^="paused_"]').each(function () {
-                        if ($(this).css("visibility") !== "hidden") {
-                            $(this).parent().parent().show();
-                        }
-                    });
-                    break;
-                case "Connected":
-                    $('.col-lg-4').hide();
-                    $.ajax({
-                        cache: false,
-                        method: 'GET',
-                        url: '{{.basePath}}/status',
-                        success: function (data) {
-                            const returnedHTML = $(data).find(".table-success").get();
-                            var returnedString = "";
-                            returnedHTML.forEach(entry => returnedString += entry.outerHTML);
-                            $(".fa-key").each(function () {
-                                if (returnedString.indexOf($(this).parent().text().trim()) != -1) {
-                                    $(this).closest('.col-lg-4').show();
-                                }
-                            })
-                        }
-                    });
-                    break;
-                case "Disconnected":
-                    $('.col-lg-4').show();
-                    $.ajax({
-                        cache: false,
-                        method: 'GET',
-                        url: '{{.basePath}}/status',
-                        success: function (data) {
-                            const returnedHTML = $(data).find(".table-success").get();
-                            var returnedString = "";
-                            returnedHTML.forEach(entry => returnedString += entry.outerHTML);
-                            $(".fa-key").each(function () {
-                                if (returnedString.indexOf($(this).parent().text().trim()) != -1) {
-                                    $(this).closest('.col-lg-4').hide();
-                                }
-                            })
-                        }
-                    });
-                    break;
-                default:
-                    $('.col-lg-4').hide();
-                    const selectedSR = $("#status-selector").val()
-                    $(".fa-subnetrange").each(function () {
-                        const srs = $(this).parent().text().trim().split(',')
-                        for (const sr of srs) {
-                            if (sr === selectedSR) {
-                                $(this).closest('.col-lg-4').show();
-                                break
-                            }                            
-                        }
-                    })
-                    // $('.col-lg-4').show();
-                    break;
+        $('#search-input').on('input keyup', function () {
+            $('#status-selector').val('All');
+            ++statusRequest;
+            applyClientFilters();
+        });
+
+        $('#status-selector').on('change', function () {
+            $('#search-input').val('');
+            const selected = $(this).val();
+            const request = ++statusRequest;
+            if (selected === 'Connected' || selected === 'Disconnected') {
+                connectedKeys = null;
+                applyClientFilters();
+                $.ajax({
+                    cache: false, method: 'GET', url: '{{.basePath}}/status',
+                    success: function (data) {
+                        if (request !== statusRequest) return;
+                        connectedKeys = $(data).find('.table-success').map(function () {
+                            return $(this).children('td').eq(4).text().trim();
+                        }).get();
+                        applyClientFilters();
+                    },
+                    error: function () {
+                        if (request !== statusRequest) return;
+                        // Unknown is not disconnected: keep both views empty rather than mislabel peers.
+                        connectedKeys = null;
+                        toastr.error('Unable to load connection status');
+                        applyClientFilters();
+                    }
+                });
+            } else {
+                applyClientFilters();
             }
         });
 
@@ -557,9 +574,11 @@ Wireguard Clients
                     success: function(data) {
                         $("#modal_remove_client").modal('hide');
                         toastr.success('Removed client successfully');
-                        const divElement = document.getElementById('client_' + client_id);
-                        divElement.style.display = "none";
-                        updateApplyConfigVisibility()
+                        document.getElementById('client_' + client_id)?.remove();
+                        $('#client-table tbody tr').filter(function () {
+                            return $(this).attr('data-client-id') === client_id;
+                        }).remove();
+                        updateApplyConfigVisibility();
                     },
                     error: function(jqXHR, exception) {
                         const responseJson = jQuery.parseJSON(jqXHR.responseText);

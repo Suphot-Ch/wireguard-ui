@@ -1,5 +1,60 @@
+// Build table cells with DOM text/attributes, never by interpolating client data as HTML.
+function escapeClientHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character];
+    });
+}
+
+function renderClientTableRow(clientData) {
+    const client = clientData.Client;
+    const row = $('<tr>').attr('data-client-id', client.id);
+    function cell(label, value, className) {
+        const td = $('<td>').attr('data-label', label).text(value || '—');
+        if (className) td.addClass(className);
+        row.append(td);
+        return td;
+    }
+    cell('Name', client.name);
+    cell('Email', client.email);
+    cell('IP Allocation', (client.allocated_ips || []).join(', '), 'client-table-ips');
+    cell('Allowed IPs', (client.allowed_ips || []).join(', '), 'client-table-ips');
+    const status = cell('Status', client.enabled ? 'Enabled' : 'Disabled');
+    status.addClass('client-table-status');
+    const actions = cell('Actions', '', 'client-table-actions').empty();
+    $('<a class="btn btn-outline-primary btn-sm">Download</a>')
+        .attr('href', 'download?clientid=' + encodeURIComponent(client.id)).appendTo(actions);
+    function modalButton(label, target) {
+        return $('<button type="button" class="btn btn-outline-primary btn-sm">')
+            .text(label).attr({ 'data-toggle': 'modal', 'data-target': target,
+                'data-clientid': client.id, 'data-clientname': client.name }).appendTo(actions);
+    }
+    modalButton('QR code', '#modal_qr_client').prop('disabled', !clientData.QRCode);
+    modalButton('Email', '#modal_email_client');
+    if (client.telegram_userid) modalButton('Telegram', '#modal_telegram_client');
+    modalButton('Edit', '#modal_edit_client');
+    const disable = modalButton('Disable', '#modal_pause_client').addClass('client-table-disable');
+    const enable = $('<button type="button" class="btn btn-outline-success btn-sm client-table-enable">Enable</button>')
+        .on('click', function () { resumeClient(client.id); }).appendTo(actions);
+    disable.prop('hidden', !client.enabled);
+    enable.prop('hidden', !!client.enabled);
+    modalButton('Delete', '#modal_remove_client').addClass('btn-outline-danger');
+    $('#client-table tbody').append(row);
+    return row;
+}
+
 function renderClientList(data) {
     $.each(data, function(index, obj) {
+        const rawClient = obj.Client;
+        const safeClient = { ...rawClient };
+        for (const field of ['id', 'name', 'email', 'public_key', 'telegram_userid', 'additional_notes']) {
+            safeClient[field] = escapeClientHtml(rawClient[field]);
+        }
+        for (const field of ['allocated_ips', 'allowed_ips', 'subnet_ranges']) {
+            safeClient[field] = (rawClient[field] || []).map(escapeClientHtml);
+        }
+        const downloadURL = 'download?clientid=' + encodeURIComponent(rawClient.id);
+        const original = obj;
+        obj = { ...obj, Client: safeClient };
         // render telegram button
         let telegramButton = ''
         if (obj.Client.telegram_userid) {
@@ -47,11 +102,11 @@ function renderClientList(data) {
         let html = `<div class="col-sm-6 col-md-6 col-lg-4" id="client_${obj.Client.id}">
                         <div class="info-box">
                             <div class="overlay" id="paused_${obj.Client.id}"` + clientStatusHtml
-                                + `<i class="paused-client fas fa-3x fa-play" onclick="resumeClient('${obj.Client.id}')"></i>
+                                + `<i class="paused-client fas fa-3x fa-play" data-clientid="${obj.Client.id}" role="button" tabindex="0" aria-label="Enable ${obj.Client.name}"></i>
                             </div>
                             <div class="info-box-content" style="overflow: hidden">
                                 <div class="btn-group">
-                                    <a href="download?clientid=${obj.Client.id}" class="btn btn-outline-primary btn-sm">Download</a>
+                                    <a href="${downloadURL}" class="btn btn-outline-primary btn-sm">Download</a>
                                 </div>
                                 <div class="btn-group">      
                                     <button type="button" class="btn btn-outline-primary btn-sm" data-toggle="modal"
@@ -106,7 +161,16 @@ function renderClientList(data) {
 
         // add the client html elements to the list
         $('#client-list').append(html);
+        const search = [rawClient.name, rawClient.email, ...(rawClient.allocated_ips || []),
+            ...(rawClient.allowed_ips || []), rawClient.telegram_userid, rawClient.additional_notes]
+            .join(' ').toLocaleLowerCase();
+        const card = $('#client-list').children().last();
+        const row = renderClientTableRow(original);
+        card.add(row).data('client-search', search).data('client-enabled', !!rawClient.enabled)
+            .data('client-subnets', rawClient.subnet_ranges || [])
+            .data('client-public-key', rawClient.public_key);
     });
+    if (typeof applyClientFilters === 'function') applyClientFilters();
 }
 
 function renderUserList(data) {
