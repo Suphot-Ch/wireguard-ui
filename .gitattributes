@@ -1,1 +1,4 @@
 *.html linguist-detectable=false
+# Keep executable scripts valid when checked out or exported from Windows.
+*.sh text eol=lf
+Dockerfile text eol=lf
